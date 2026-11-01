@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://aka.ms/azure.yaml.json
+name: browser-git-proxy
+metadata:
+  template: browser-git-proxy@0.1.0
+infra:
+  provider: bicep
+  path: infra
+hooks:
+  preprovision:
+    shell: pwsh
+    run: ./scripts/Test-Settings.ps1
+workflows:
+  up:
+    steps:
+      - azd: provision

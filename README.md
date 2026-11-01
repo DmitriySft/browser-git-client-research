@@ -1,5 +1,31 @@
 # browser-git-client-research
 
+## Local browser app: deployed Git proxy
+
+For development from **`http://localhost:5130`**, use this deployed proxy base URL:
+
+```text
+https://git-proxy-wpnzxfaym7kcs.gentlepond-06cb06de.newzealandnorth.azurecontainerapps.io
+```
+
+The debugging instance is deployed in Azure New Zealand North in resource group
+`rg-bgit-proxy-debug`. It forwards only GitHub Git smart-HTTP requests and permits
+CORS only for that exact localhost origin. Other ports, HTTPS localhost, and
+loopback IP origins are not allowlisted.
+
+For an isomorphic-git browser client, set `corsProxy` to the base URL above and
+keep `url` as the canonical GitHub repository URL, including `.git`. For direct
+HTTP requests, prefix the upstream host and repository path with the proxy URL:
+
+```text
+https://git-proxy-wpnzxfaym7kcs.gentlepond-06cb06de.newzealandnorth.azurecontainerapps.io/github.com/<owner>/<repository>.git/info/refs?service=git-upload-pack
+```
+
+GitHub still enforces repository authorization. This proxy does not provide
+sign-in, token exchange, REST API access, or token storage. It scales to zero when
+idle, so the first request may be delayed by a cold start. See the
+[proxy guide](docs/azure-git-proxy.md) for configuration and deployment instructions.
+
 ## Problem definition
 
 Research whether a browser application with a customer-operated HTTP proxy can provide a shared
@@ -52,11 +78,20 @@ methods, and confirm that credentials and repository payloads are not stored,
 logged, or forwarded to us. The proxy must not be an open proxy; CORS allowlisting
 alone is not access control.
 
-The current deployment candidate is Azure Container Apps with Azure Developer
+The initial deployment template uses Azure Container Apps with Azure Developer
 CLI (`azd`) and Traefik. We will provide additional deployment options later;
-these tools are not mandatory dependencies or a completed implementation.
+these tools are not mandatory dependencies for every future deployment option.
 The proxy is a transport component, not a Git engine, credential store, or
 collaboration service.
+
+An initial [Azure Git CORS proxy template](docs/azure-git-proxy.md) is available
+for debugging: Azure Developer CLI provisions Traefik on Azure Container Apps,
+with configurable HTTPS Git hosts and exact CORS origins. The initial deployment
+allows only GitHub Git-over-HTTP and `http://localhost:5130`; APIs and OAuth routes
+are excluded. GitLab-style nested repository groups are supported. The guide covers
+prerequisites, deployment, verification, limitations, and cleanup. This public
+debugging configuration intentionally has no proxy authentication or IP
+restriction; production access controls remain an unresolved decision.
 
 ### Mandatory authentication persistence
 

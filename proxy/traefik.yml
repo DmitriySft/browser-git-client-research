@@ -1,0 +1,26 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+log:
+  level: ERROR
+api:
+  dashboard: false
+entryPoints:
+  web:
+    address: ":8080"
+    transport:
+      respondingTimeouts:
+        readTimeout: 240s
+        writeTimeout: 240s
+    http:
+      middlewares:
+        - cors@file
+        - transport-headers@file
+  health:
+    address: ":8081"
+ping:
+  entryPoint: health
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: false
