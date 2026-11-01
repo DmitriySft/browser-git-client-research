@@ -10,7 +10,19 @@ import {
   signOut,
 } from "./auth";
 import { config } from "./config";
-import { cloneOrPull, commitAndPushDemoChange, headCommit, listFiles, readFile } from "./git";
+import { BookStore, bookPath } from "./books";
+import {
+  BRANCH,
+  cloneOrPull,
+  hasLocalClone,
+  repoDir,
+  commitAndPushDemoChange,
+  flush,
+  headCommit,
+  listFiles,
+  pendingChanges,
+  readFile,
+} from "./git";
 
 interface GitHubUser {
   id: number;
@@ -40,6 +52,27 @@ app.innerHTML = `
     <h3>README.md</h3>
     <pre id="readme-content"></pre>
   </section>
+  <section>
+    <h2>Books</h2>
+    <p>
+      Books are stored as <code>books/{id}.md</code> in the browser's local working tree.
+      Open, Save, and List use only this local copy, which survives browser restarts.
+      Pull fetches remote changes; Flush commits all local changes and pushes them to <code>${BRANCH}</code>.
+    </p>
+    <input id="book-id" size="40" placeholder="Book ID (any text)" />
+    <button id="book-open">Open</button>
+    <button id="book-save">Save</button>
+    <button id="book-list">List books</button>
+    <button id="book-pull">Pull books from GitHub</button>
+    <button id="flush">Flush to GitHub</button>
+    <p id="storage"></p>
+    <p id="book-path"></p>
+    <textarea id="book-content" rows="12" cols="80" placeholder="# Book title"></textarea>
+    <h3>Local books</h3>
+    <ul id="books"></ul>
+    <h3>Pending changes</h3>
+    <ul id="pending"></ul>
+  </section>
   <h2>Log</h2>
   <pre id="log"></pre>
 `;
@@ -48,6 +81,8 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const status = $<HTMLParagraphElement>("status");
 const repoUrl = $<HTMLInputElement>("repo-url");
 const log = $<HTMLPreElement>("log");
+const bookId = $<HTMLInputElement>("book-id");
+const bookContent = $<HTMLTextAreaElement>("book-content");
 let user: GitHubUser | null = null;
 let dir: string | null = null;
 
@@ -113,8 +148,53 @@ async function run(label: string, action: () => Promise<void>): Promise<void> {
   }
 }
 
+function author(): { name: string; email: string } {
+  if (!user) throw new ReauthenticationRequired("Not signed in");
+  return { name: user.name || user.login, email: `${user.id}+${user.login}@users.noreply.github.com` };
+}
+
+/** Local clone only: book operations never touch the network. */
+async function localRepository(): Promise<string> {
+  const url = repoUrl.value.trim();
+  if (!(await hasLocalClone(url))) throw new Error("No local copy yet. Use Pull books to fetch the repository once.");
+  dir = repoDir(url);
+  return dir;
+}
+
+const listItem = (text: string) => Object.assign(document.createElement("li"), { textContent: text });
+
+async function showBooks(): Promise<void> {
+  if (!dir) return;
+  const books = await new BookStore(dir).listBooks();
+  $("books").replaceChildren(
+    ...books.map((id) => {
+      const item = document.createElement("li");
+      const open = Object.assign(document.createElement("button"), { textContent: id });
+      open.addEventListener("click", () => {
+        bookId.value = id;
+        void run(`Open book "${id}"`, () => openBook(id));
+      });
+      item.append(open);
+      return item;
+    }),
+  );
+  const changes = await pendingChanges(dir);
+  $("pending").replaceChildren(
+    ...(changes.length
+      ? changes.map(({ filepath, change }) => listItem(`${change}: ${filepath}`))
+      : [listItem("No local changes")]),
+  );
+}
+
+async function openBook(id: string): Promise<void> {
+  const content = await new BookStore(await localRepository()).readBook(id);
+  bookContent.value = content ?? "";
+  $("book-path").textContent = `${bookPath(id)}${content === null ? " (new; Save creates it)" : ""}`;
+}
+
 async function showRepository(): Promise<void> {
   if (!dir) return;
+  await showBooks();
   $("head").textContent = `HEAD: ${await headCommit(dir)}`;
   const files = $<HTMLUListElement>("files");
   files.replaceChildren(
@@ -142,16 +222,66 @@ $("readme").addEventListener("click", () =>
 $("push").addEventListener("click", () =>
   run("Commit & push", async () => {
     if (!dir) throw new Error("Clone the repository first.");
-    if (!user) throw new ReauthenticationRequired("Not signed in");
-    const oid = await commitAndPushDemoChange(dir, {
-      name: user.name || user.login,
-      email: `${user.id}+${user.login}@users.noreply.github.com`,
-    });
+    const oid = await commitAndPushDemoChange(dir, author());
     write(`Pushed ${oid.slice(0, 7)}`);
     await showRepository();
   }),
 );
+$("book-open").addEventListener("click", () => run(`Open book "${bookId.value}"`, () => openBook(bookId.value)));
+$("book-save").addEventListener("click", () =>
+  run(`Save book "${bookId.value}"`, async () => {
+    await new BookStore(await localRepository()).writeBook(bookId.value, bookContent.value);
+    $("book-path").textContent = bookPath(bookId.value);
+    await showBooks();
+  }),
+);
+$("book-list").addEventListener("click", () =>
+  run("List books", async () => {
+    const books = await new BookStore(await localRepository()).listBooks();
+    write(books.length ? `Books: ${books.join(", ")}` : "No books yet");
+    await showBooks();
+  }),
+);
+$("book-pull").addEventListener("click", () =>
+  run("Pull books", async () => {
+    localStorage.setItem("bgit.demo.repoUrl", repoUrl.value);
+    const pending = (await hasLocalClone(repoUrl.value.trim())) ? await pendingChanges(await localRepository()) : [];
+    if (pending.length) throw new Error("Local changes are not flushed yet. Flush first, which also merges remote changes.");
+    dir = await cloneOrPull(repoUrl.value.trim(), write);
+    await showRepository();
+  }),
+);
+$("flush").addEventListener("click", () =>
+  run("Flush", async () => {
+    const result = await flush(await localRepository(), author(), write);
+    write(
+      result.commit
+        ? `Committed ${result.commit.slice(0, 7)} with ${result.changes.length} change(s)` +
+            `${result.merged ? " and merged remote changes" : ""}; pushed to ${BRANCH}`
+        : `No local changes; ${BRANCH} is pushed`,
+    );
+    await showRepository();
+  }),
+);
 onTokensChanged(() => void refreshStatus());
+
+/** Reopens the local copy left by an earlier session, without network access. */
+async function restoreLocalState(): Promise<void> {
+  const persisted = (await navigator.storage?.persist?.()) ?? false;
+  const estimate = await navigator.storage?.estimate?.();
+  const used = estimate?.usage ? `${(estimate.usage / 1024).toFixed(0)} KB used` : "usage unknown";
+  if (await hasLocalClone(repoUrl.value.trim())) {
+    dir = repoDir(repoUrl.value.trim());
+    await showRepository();
+    const books = await new BookStore(dir).listBooks();
+    write(`Restored local copy from browser storage: ${books.length} book(s), no network used`);
+  }
+  $("storage").textContent =
+    `Browser storage (IndexedDB "bgit"): ${used}; ` +
+    (persisted ? "persistent (protected from eviction)." : "best-effort (the browser may evict it under storage pressure).");
+}
+
+void restoreLocalState().catch((error) => write(`Restoring local state failed: ${describe(error)}`));
 
 completeSignIn()
   .then((completed) => completed && write("Sign-in completed"))
