@@ -1,7 +1,7 @@
 import LightningFS from "@isomorphic-git/lightning-fs";
 import git, { type AuthCallback, type AuthFailureCallback } from "isomorphic-git";
 import http from "isomorphic-git/http/web";
-import { getAccessToken, recoverFromRejectedToken } from "./auth";
+import { getAccessToken, loadTokens, recoverFromRejectedToken } from "./auth";
 import { config } from "./config";
 
 /** Browser-private IndexedDB file system; a placeholder pending storage research. */
@@ -20,7 +20,17 @@ const onAuthFailure: AuthFailureCallback = async (_url, auth) => {
   return token && token !== auth.password ? { username: "x-access-token", password: token } : { cancel: true };
 };
 
-const remote = { fs, http, cache, corsProxy: config.proxyUrl, onAuth, onAuthFailure };
+/**
+ * Options for network commands. isomorphic-git otherwise sends its first request without
+ * credentials and only calls onAuth after a 401, which costs a round trip and logs a 401
+ * in the browser console on every pull or push. When signed in, send the token up front;
+ * onAuth/onAuthFailure still handle a rejected or refreshed token.
+ */
+async function remoteOptions() {
+  const headers: Record<string, string> = {};
+  if (loadTokens()) headers.Authorization = `Basic ${btoa(`x-access-token:${await getAccessToken()}`)}`;
+  return { fs, http, cache, corsProxy: config.proxyUrl, onAuth, onAuthFailure, headers };
+}
 
 export function repoDir(url: string): string {
   const { host, pathname } = new URL(url);
@@ -55,10 +65,10 @@ export async function cloneOrPull(url: string, onMessage: (message: string) => v
   const onProgress = ({ phase, loaded, total }: { phase: string; loaded: number; total?: number }) =>
     onMessage(`${phase}: ${loaded}${total ? `/${total}` : ""}`);
   if (await exists(`${dir}/.git`)) {
-    await git.fastForward({ ...remote, dir, ref: BRANCH, singleBranch: true, onProgress });
+    await git.fastForward({ ...(await remoteOptions()), dir, ref: BRANCH, singleBranch: true, onProgress });
   } else {
     await mkdirp(dir);
-    await git.clone({ ...remote, dir, url, ref: BRANCH, singleBranch: true, onProgress });
+    await git.clone({ ...(await remoteOptions()), dir, url, ref: BRANCH, singleBranch: true, onProgress });
   }
   return dir;
 }
@@ -94,7 +104,7 @@ export async function commitAndPushDemoChange(
   });
   await git.add({ fs, dir, filepath: path });
   const oid = await git.commit({ fs, dir, message: `Browser Git client test commit by ${author.name}`, author });
-  const result = await git.push({ ...remote, dir });
+  const result = await git.push({ ...(await remoteOptions()), dir });
   if (!result.ok) throw new Error(`Push rejected: ${result.error ?? JSON.stringify(result.refs)}`);
   return oid;
 }
@@ -151,7 +161,7 @@ export async function flush(
       })
     : null;
 
-  const pushOnce = () => git.push({ ...remote, dir, ref: BRANCH, remoteRef: BRANCH });
+  const pushOnce = async () => git.push({ ...(await remoteOptions()), dir, ref: BRANCH, remoteRef: BRANCH });
   let merged = false;
   let result;
   try {
@@ -159,7 +169,7 @@ export async function flush(
   } catch (error) {
     if (!(error instanceof git.Errors.PushRejectedError)) throw error;
     onMessage("Remote has new commits; pulling and merging…");
-    await git.pull({ ...remote, dir, ref: BRANCH, singleBranch: true, author });
+    await git.pull({ ...(await remoteOptions()), dir, ref: BRANCH, singleBranch: true, author });
     merged = true;
     result = await pushOnce();
   }

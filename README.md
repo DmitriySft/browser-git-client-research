@@ -188,3 +188,10 @@ proxy, the research GitHub OAuth App, and the demo repository. Override them in
 `http://localhost:5130`; the OAuth callback is `http://localhost:5130/oauth/callback`.
 **Read README.md** clones or pulls the demo repository through the proxy and
 shows its README, which is a quick end-to-end check of sign-in and Git access.
+
+The **Books** section demonstrates replacing a CRUD REST API with Git storage:
+books are the demo entity, stored by the generic `GitCollection<T>`
+(`src/collection.ts`) that any number of entities can reuse. `BookApi`
+(`listBooks`, `readBook`, `writeBook`, `deleteBook`) works on the local working
+tree only, **Pull books** fetches from GitHub, and **Flush** commits and pushes to
+`main`. See [Migrating a CRUD REST client to Git storage](docs/rest-to-git-storage.md).

@@ -10,7 +10,7 @@ import {
   signOut,
 } from "./auth";
 import { config } from "./config";
-import { BookStore, bookPath } from "./books";
+import { BookStore } from "./books";
 import {
   BRANCH,
   cloneOrPull,
@@ -56,12 +56,13 @@ app.innerHTML = `
     <h2>Books</h2>
     <p>
       Books are stored as <code>books/{id}.md</code> in the browser's local working tree.
-      Open, Save, and List use only this local copy, which survives browser restarts.
+      Open, Save, Delete, and List use only this local copy, which survives browser restarts.
       Pull fetches remote changes; Flush commits all local changes and pushes them to <code>${BRANCH}</code>.
     </p>
     <input id="book-id" size="40" placeholder="Book ID (any text)" />
     <button id="book-open">Open</button>
     <button id="book-save">Save</button>
+    <button id="book-delete">Delete</button>
     <button id="book-list">List books</button>
     <button id="book-pull">Pull books from GitHub</button>
     <button id="flush">Flush to GitHub</button>
@@ -187,9 +188,10 @@ async function showBooks(): Promise<void> {
 }
 
 async function openBook(id: string): Promise<void> {
-  const content = await new BookStore(await localRepository()).readBook(id);
+  const store = new BookStore(await localRepository());
+  const content = await store.readBook(id);
   bookContent.value = content ?? "";
-  $("book-path").textContent = `${bookPath(id)}${content === null ? " (new; Save creates it)" : ""}`;
+  $("book-path").textContent = `${store.path(id)}${content === null ? " (new; Save creates it)" : ""}`;
 }
 
 async function showRepository(): Promise<void> {
@@ -230,8 +232,17 @@ $("push").addEventListener("click", () =>
 $("book-open").addEventListener("click", () => run(`Open book "${bookId.value}"`, () => openBook(bookId.value)));
 $("book-save").addEventListener("click", () =>
   run(`Save book "${bookId.value}"`, async () => {
-    await new BookStore(await localRepository()).writeBook(bookId.value, bookContent.value);
-    $("book-path").textContent = bookPath(bookId.value);
+    const store = new BookStore(await localRepository());
+    await store.writeBook(bookId.value, bookContent.value);
+    $("book-path").textContent = store.path(bookId.value);
+    await showBooks();
+  }),
+);
+$("book-delete").addEventListener("click", () =>
+  run(`Delete book "${bookId.value}"`, async () => {
+    const deleted = await new BookStore(await localRepository()).deleteBook(bookId.value);
+    if (!deleted) throw new Error("No such book in the local copy.");
+    bookContent.value = "";
     await showBooks();
   }),
 );
