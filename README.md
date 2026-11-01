@@ -67,3 +67,14 @@ proxy/platform layer. CORS is not authentication: non-browser callers can forge
 `Origin`. The browser must own `state` validation and PKCE verifier lifecycle.
 Tokens exist transiently in transport memory, but are never persisted or cached.
 Device login remains the initial path and needs no App secret.
+## Development
+
+Requires Node.js (LTS) and npm.
+
+```sh
+npm install
+npm run dev              # Vite dev server with hot reload at http://localhost:5170
+npm run typecheck:watch  # optional: continuous TypeScript type checking
+```
+
+Source maps are enabled, so breakpoints in `src/*.ts` work in browser DevTools.
