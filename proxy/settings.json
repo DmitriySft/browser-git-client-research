@@ -1,0 +1,26 @@
+{
+  "upstreams": {
+    "github.com": "https://github.com"
+  },
+  "allowedOrigins": [
+    "http://localhost:5130"
+  ],
+  "allowedMethods": [
+    "GET",
+    "POST",
+    "OPTIONS"
+  ],
+  "allowedHeaders": [
+    "Authorization",
+    "Content-Type",
+    "Accept",
+    "Git-Protocol"
+  ],
+  "exposedHeaders": [
+    "WWW-Authenticate",
+    "X-RateLimit-Limit",
+    "X-RateLimit-Remaining",
+    "X-RateLimit-Reset",
+    "Retry-After"
+  ]
+}

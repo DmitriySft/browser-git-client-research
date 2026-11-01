@@ -1,0 +1,49 @@
+{{ $settings := mustFromJson (env "PROXY_SETTINGS") }}
+http:
+  routers:
+    health:
+      entryPoints: [web]
+      rule: 'Path(`/healthz`) && Method(`GET`)'
+      service: ping@internal
+{{ range $name, $url := $settings.upstreams }}
+    discovery-{{ $name }}:
+      entryPoints: [web]
+      rule: 'PathRegexp(`^/{{ $name | regexQuoteMeta }}/([A-Za-z0-9_-][A-Za-z0-9_.-]*/)+[A-Za-z0-9_-][A-Za-z0-9_.-]*\.git/info/refs$`) && (Method(`GET`) || Method(`OPTIONS`)) && (Query(`service`, `git-upload-pack`) || Query(`service`, `git-receive-pack`))'
+      middlewares: [prefix-{{ $name }}]
+      service: upstream-{{ $name }}
+    transfer-{{ $name }}:
+      entryPoints: [web]
+      rule: 'PathRegexp(`^/{{ $name | regexQuoteMeta }}/([A-Za-z0-9_-][A-Za-z0-9_.-]*/)+[A-Za-z0-9_-][A-Za-z0-9_.-]*\.git/git-(upload|receive)-pack$`) && (Method(`POST`) || Method(`OPTIONS`))'
+      middlewares: [prefix-{{ $name }}]
+      service: upstream-{{ $name }}
+{{ end }}
+  middlewares:
+    cors:
+      headers:
+        accessControlAllowOriginList: {{ $settings.allowedOrigins | toJson }}
+        accessControlAllowMethods: {{ $settings.allowedMethods | toJson }}
+        accessControlAllowHeaders: {{ $settings.allowedHeaders | toJson }}
+        accessControlExposeHeaders: {{ $settings.exposedHeaders | toJson }}
+        accessControlMaxAge: 600
+        addVaryHeader: true
+    transport-headers:
+      headers:
+        customRequestHeaders:
+          Cookie: ""
+        customResponseHeaders:
+          Set-Cookie: ""
+          Cache-Control: "no-store"
+          X-Content-Type-Options: "nosniff"
+{{ range $name, $url := $settings.upstreams }}
+    prefix-{{ $name }}:
+      stripPrefix:
+        prefixes: ["/{{ $name }}"]
+{{ end }}
+  services:
+{{ range $name, $url := $settings.upstreams }}
+    upstream-{{ $name }}:
+      loadBalancer:
+        passHostHeader: false
+        servers:
+          - url: {{ $url | toJson }}
+{{ end }}
