@@ -11,6 +11,10 @@ param location string
 @description('Fixed upstream HTTPS origins and exact CORS origin/header/method allowlists.')
 param proxySettings object = loadJsonContent('../proxy/settings.json')
 
+@secure()
+@description('Base64-encoded JSON object mapping oauthClients names to client secrets, for example {"github":"..."}. Base64 keeps the JSON quotes out of azd parameter substitution.')
+param oauthClientSecretsBase64 string = ''
+
 var tags = {
   'azd-env-name': environmentName
   purpose: 'browser-git-proxy-research'
@@ -30,6 +34,7 @@ module proxy './proxy.bicep' = {
     suffix: uniqueString(subscription().id, environmentName, location)
     tags: tags
     proxySettings: proxySettings
+    oauthClientSecrets: empty(oauthClientSecretsBase64) ? '' : base64ToString(oauthClientSecretsBase64)
   }
 }
 

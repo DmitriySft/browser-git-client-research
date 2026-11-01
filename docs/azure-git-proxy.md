@@ -207,11 +207,13 @@ upstream, the template allows only:
 | Proxy itself | `/healthz` | GET |
 
 OPTIONS preflights are answered locally for the allowed upstream routes.
-Unconfigured hosts, website pages, REST APIs, OAuth/device-code endpoints, SSH,
-Git LFS, dumb HTTP Git, and redirect rewriting are not supported. Traefik passes
+When `oauthClients` is configured, `POST /oauth/<client>/token` is also routed;
+see [OAuth token helper](#oauth-token-helper). Unconfigured hosts, website pages,
+REST APIs, device-code endpoints, SSH, Git LFS, dumb HTTP Git, and redirect
+rewriting are not supported. Traefik passes
 upstream redirects through; use canonical repository URLs so browser requests
-do not leave the proxy and encounter upstream CORS restrictions. Obtain Git
-credentials separately; this deployment does not proxy sign-in or token exchange.
+do not leave the proxy and encounter upstream CORS restrictions. The proxy
+never stores Git credentials; the browser obtains and keeps them.
 
 For an isomorphic-git client, use the ordinary GitHub URL as `url` and the proxy
 base URL as `corsProxy`:
@@ -238,6 +240,88 @@ request headers are allowed. Use `credentials: 'omit'` for browser fetches;
 Git credentials travel in `Authorization`, not proxy cookies.
 Upstream error responses retain CORS so the client can handle expired tokens.
 
+## OAuth token helper
+
+GitHub's OAuth token endpoint does not allow browser (CORS) requests and requires
+the client secret, so a browser-only client cannot exchange an authorization
+code itself. The optional OAuth helper is a small, stateless Python
+standard-library sidecar ([`proxy/oauth_helper.py`](../proxy/oauth_helper.py))
+in the same container app. It listens only on `127.0.0.1:8082`; Traefik routes
+`POST /oauth/<client>/token` to it with CORS, a rate limit (30 per minute per
+client IP, burst 10), and request/response size limits.
+
+For each request the helper:
+
+- requires an allowed `Origin` and a JSON body;
+- accepts `authorization_code` (with `code`, `code_verifier`, and a configured
+  `redirect_uri`) or `refresh_token`, and rejects other fields;
+- adds the configured client ID and secret, posts to the fixed `tokenUrl`, and
+  never follows redirects;
+- returns only token fields (`access_token`, `refresh_token`, `expires_in`, ...)
+  with `Cache-Control: no-store`, and maps provider errors to safe error codes.
+
+It writes no access logs and stores nothing. Secrets and tokens exist only in
+memory while a request is processed.
+
+### Register the OAuth client
+
+Use a **GitHub App** where possible: it can be installed on selected
+repositories only, and its user tokens expire after 8 hours and are refreshed.
+A **GitHub OAuth App** is simpler (no installation), but needs the `repo` scope,
+which grants access to every repository the user can reach, and its tokens do
+not expire.
+
+GitHub App (Settings → Developer settings → GitHub Apps → New GitHub App):
+
+1. Callback URL: `http://localhost:5130/oauth/callback` (exact match).
+2. Enable **Expire user authorization tokens**. Leave device flow and
+   **Request user authorization (OAuth) during installation** off; deactivate
+   the webhook.
+3. Repository permissions: **Contents: Read and write** (Metadata read-only is
+   added automatically).
+4. Create the App, note its **Client ID** (`Iv23...`), and generate a client
+   secret.
+5. Install the App and choose **Only select repositories**.
+
+For an OAuth App, set the **Authorization callback URL** to the same value and
+generate a client secret; its client ID starts with `Ov23`. The client requests
+the `repo` scope for `Ov` client IDs and no scope for GitHub Apps.
+
+### Configure and deploy
+
+Add the public client settings to `proxy/settings.json`:
+
+```json
+"oauthClients": {
+  "github": {
+    "tokenUrl": "https://github.com/login/oauth/access_token",
+    "clientId": "<client ID>",
+    "redirectUris": ["http://localhost:5130/oauth/callback"]
+  }
+}
+```
+
+Redirect URIs must use an origin in `allowedOrigins`, and `Content-Type` must be
+in `allowedHeaders`; `Test-Settings.ps1` checks this. Then run:
+
+```powershell
+./scripts/Deploy-Proxy.ps1
+```
+
+The script selects or creates the `bgit-proxy-debug` azd environment, prompts
+for the client secret with masked input, provisions the proxy, and runs
+`Test-Proxy.ps1 -OAuthClient github`. Use `-KeepSecret` to redeploy with the
+stored secret, or `-EnvironmentName` for another environment.
+
+The secret is stored as `OAUTH_CLIENT_SECRETS_BASE64` (a base64-encoded JSON
+object such as `{"github":"..."}`) in `.azure/<environment>/.env`. Base64 only
+avoids JSON quoting problems in azd parameter substitution; it is not
+encryption. That file is plain text, readable only by your user and ignored by
+Git. In Azure, the value is a secure Bicep parameter and the container app
+secret `oauth-client-secrets`, exposed only to the helper sidecar. A changed
+secret creates a new revision. Clients without a secret are disabled with a
+warning in the helper log.
+
 ## Public debugging exposure and privacy
 
 This debugging template intentionally has no proxy authentication or IP
@@ -255,8 +339,10 @@ are enabled. Cookies are stripped in both directions and responses are marked
 Azure still operates the infrastructure and can maintain platform diagnostics;
 the customer must trust Azure as well as the proxy operator.
 
-The two ACA secret entries contain **public YAML configuration only**, not
-credentials. Secret volumes avoid building a custom image. Configuration
+The `static-config` and `routing-config` ACA secret entries contain **public
+YAML configuration only**, not credentials. When OAuth is configured,
+`oauth-helper-script` holds the public helper source and `oauth-client-secrets`
+holds the only real secret. Secret volumes avoid building a custom image. Configuration
 content and upstream/CORS settings determine the revision suffix, so edits
 create a new revision.
 

@@ -22,5 +22,14 @@
     "X-RateLimit-Remaining",
     "X-RateLimit-Reset",
     "Retry-After"
-  ]
+  ],
+  "oauthClients": {
+    "github": {
+      "tokenUrl": "https://github.com/login/oauth/access_token",
+      "clientId": "Ov23liYk4IDSqiJp0v9W",
+      "redirectUris": [
+        "http://localhost:5130/oauth/callback"
+      ]
+    }
+  }
 }

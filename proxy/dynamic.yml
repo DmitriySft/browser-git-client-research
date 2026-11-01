@@ -17,7 +17,27 @@ http:
       middlewares: [prefix-{{ $name }}]
       service: upstream-{{ $name }}
 {{ end }}
+{{ range $name, $client := $settings.oauthClients }}
+    oauth-{{ $name }}:
+      entryPoints: [web]
+      rule: 'Path(`/oauth/{{ $name }}/token`) && (Method(`POST`) || Method(`OPTIONS`))'
+      middlewares: [oauth-rate-limit, oauth-body-limit]
+      service: oauth-helper
+{{ end }}
   middlewares:
+    oauth-rate-limit:
+      rateLimit:
+        average: 30
+        period: 1m
+        burst: 10
+        sourceCriterion:
+          ipStrategy:
+            # The platform ingress appends the client IP to X-Forwarded-For.
+            depth: 1
+    oauth-body-limit:
+      buffering:
+        maxRequestBodyBytes: 8192
+        maxResponseBodyBytes: 65536
     cors:
       headers:
         accessControlAllowOriginList: {{ $settings.allowedOrigins | toJson }}
@@ -47,3 +67,8 @@ http:
         servers:
           - url: {{ $url | toJson }}
 {{ end }}
+    oauth-helper:
+      loadBalancer:
+        servers:
+          # Sidecar container sharing the replica's network namespace.
+          - url: "http://127.0.0.1:8082"

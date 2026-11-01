@@ -87,11 +87,19 @@ collaboration service.
 An initial [Azure Git CORS proxy template](docs/azure-git-proxy.md) is available
 for debugging: Azure Developer CLI provisions Traefik on Azure Container Apps,
 with configurable HTTPS Git hosts and exact CORS origins. The initial deployment
-allows only GitHub Git-over-HTTP and `http://localhost:5130`; APIs and OAuth routes
-are excluded. GitLab-style nested repository groups are supported. The guide covers
+allows only GitHub Git-over-HTTP, an optional OAuth token-exchange route, and
+`http://localhost:5130`; APIs are excluded. GitLab-style nested repository groups are supported. The guide covers
 prerequisites, deployment, verification, limitations, and cleanup. This public
 debugging configuration intentionally has no proxy authentication or IP
 restriction; production access controls remain an unresolved decision.
+
+### Decision: isomorphic-git as the browser Git client
+
+The client uses [isomorphic-git](https://isomorphic-git.org/), a pure JavaScript
+Git implementation with a browser HTTP client and `corsProxy` support for the
+customer proxy. The libgit2 WebAssembly port (`wasm-git`) was considered but is
+pre-1.0, large, and needs custom networking glue. Known isomorphic-git limits:
+no Git LFS, SSH, or partial clone, and pack data is processed in memory.
 
 ### Mandatory authentication persistence
 
@@ -138,71 +146,29 @@ synchronization timing decisions come afterward.
 
 ## Authentication direction
 
-Device login is sufficient for the initial version. The browser client manages
-and persists GitHub access and refresh tokens; the customer-operated reverse
-proxy is stateless transport, with no token/session store or credential logging.
-TLS termination means the proxy still sees credentials in transit.
+[GitHub repository access options](docs/github-access-options.md) compares three
+ways to obtain a token for the browser client: a fine-grained personal access
+token, device flow run by a helper outside the browser, and a generic
+confidential-client OAuth helper in the proxy. The client now implements the
+third option.
 
-### Optional future browser-redirect OAuth
+GitHub's token endpoint and Git endpoints do not allow browser (CORS) requests,
+and GitHub still requires the client secret when exchanging an authorization
+code, even with PKCE. The browser therefore cannot complete OAuth on its own: it
+redirects to GitHub for authorization, then sends the code and PKCE verifier to
+the proxy's `POST /oauth/<client>/token` route. A stateless sidecar
+([`proxy/oauth_helper.py`](proxy/oauth_helper.py)) adds the client secret, calls
+the fixed token endpoint, and returns only the token fields. Refresh uses the
+same route. The browser client manages and persists the tokens; the proxy stores
+no tokens or sessions and does not log credentials. TLS termination means the
+proxy still sees credentials in transit.
 
-- An administrator registers and installs a GitHub App with minimal permissions,
-  registers the browser client's callback URL, and configures its client ID and
-  client secret in the proxy deployment's secret facility.
-- The browser generates `state` and an S256 PKCE challenge, preserves the verifier
-  across navigation, and redirects to GitHub's authorization page. On return, it
-  validates `state` and sends the authorization code and verifier to the proxy.
-- A small stateless token-exchange handler adds the configured client secret and
-  calls GitHub's fixed token endpoint. It returns user tokens directly to the
-  browser; refresh exchanges can use the same pattern. This requires a handler
-  or suitable component, not ordinary reverse-proxy routing alone.
-- Fix the upstream, client ID, and callback URL; validate accepted fields, rate
-  limit exchanges, and disable credential/body logging and token-response caching.
-  The app secret remains server-side; user tokens remain client-managed. PKCE
-  protects code redemption, not tokens from malicious browser JavaScript.
-
-Reference: [GitHub App web authorization flow](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app#using-the-web-application-flow-to-generate-a-user-access-token).
-
-#### Small handler example
-
-Traefik does support interpreted Go middleware through **Yaegi plugins**, as well
-as WASM plugins; it is not a general-purpose inline JavaScript/Lua HTTP-function
-configuration. A plugin could implement this exchange, but a small private helper
-behind Traefik is easier to inspect independently and avoids plugin coupling.
-See [Traefik's extension mechanisms](https://doc.traefik.io/traefik/extend/extend-traefik/).
-
-[`examples/oauth_exchange.py`](examples/oauth_exchange.py) is a Python
-standard-library example. Configure `GH_CLIENT_ID`, `GH_CLIENT_SECRET`,
-`CALLBACK_URL`, and `BROWSER_ORIGIN` through the deployment environment, then run
-`python3 examples/oauth_exchange.py`. Only the helper receives the App secret.
-[`examples/traefik-oauth.yml`](examples/traefik-oauth.yml) routes the exact
-`POST /oauth/exchange` path and CORS preflights to it, with a rate limit.
-
-After validating callback `state`, the browser submits:
-
-```javascript
-const response = await fetch(`${proxyOrigin}/oauth/exchange`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ code, code_verifier: verifier }),
-  credentials: "omit",
-});
-if (!response.ok) throw new Error("GitHub token exchange failed");
-const tokens = await response.json(); // Client-managed; never a proxy session.
-```
-
-For refresh, submit `{ refresh_token: currentRefreshToken }` instead. The helper
-injects the fixed App credentials and callback, refuses caller-supplied upstreams
-or additional fields, and returns only token response fields with `no-store`.
-Refresh responses replace both client-held tokens; serialize refresh attempts,
-since GitHub invalidates the previous tokens on successful refresh.
-
-This is an illustrative helper, not a production HTTP server. Keep port 8081
-private; configure HTTPS, ingress body/read timeouts and size limits, trusted
-forwarded-IP handling for rate limits, and no credential/body logging at every
-proxy/platform layer. CORS is not authentication: non-browser callers can forge
-`Origin`. The browser must own `state` validation and PKCE verifier lifecycle.
-Tokens exist transiently in transport memory, but are never persisted or cached.
-Device login remains the initial path and needs no App secret.
+Both GitHub App and GitHub OAuth App clients work; only the client ID changes.
+A GitHub App can be limited to the repositories it is installed on, and its
+tokens expire and are refreshed. An OAuth App needs the `repo` scope, which
+grants access to every repository the user can reach, and its tokens do not
+expire. See [Azure Git CORS proxy](docs/azure-git-proxy.md#oauth-token-helper)
+for configuration and deployment.
 
 ## Development
 
@@ -215,3 +181,10 @@ npm run typecheck:watch  # optional: continuous TypeScript type checking
 ```
 
 Source maps are enabled, so breakpoints in `src/*.ts` work in browser DevTools.
+
+The defaults in [`src/config.ts`](src/config.ts) point at the deployed debugging
+proxy, the research GitHub OAuth App, and the demo repository. Override them in
+`.env.local` (see [`.env.example`](.env.example)). Open the app at
+`http://localhost:5130`; the OAuth callback is `http://localhost:5130/oauth/callback`.
+**Read README.md** clones or pulls the demo repository through the proxy and
+shows its README, which is a quick end-to-end check of sign-in and Git access.
