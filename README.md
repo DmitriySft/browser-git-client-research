@@ -35,6 +35,19 @@ Existing Git hosting services are allowed. Do not assume an application-owned
 authentication server, CORS proxy, or collaboration relay. Permission to use other
 third-party transport services remains unresolved.
 
+**Authentication persistence is mandatory:** authentication credentials must
+survive browser restarts so users can resume repository access without repeating
+sign-in while their authorization remains valid. Session-only or memory-only
+token storage is insufficient. Expiry, revocation, or provider policy may still
+require re-authentication. If credentials are removed or become unusable, the
+application must explicitly request re-authentication without discarding pending
+repository edits.
+
+The persistence and credential-protection mechanism remains to be researched;
+no storage technology or encryption scheme is selected. Evaluate protection
+against malicious same-origin JavaScript separately from persistence: encrypting
+tokens with a key available to that JavaScript does not itself prevent token theft.
+
 Research should establish which capabilities are feasible under this constraint,
 which depend on browser or host support, and which are blocked or require an
 explicit scope decision. Findings should explain the relevant tradeoffs and
