@@ -175,7 +175,7 @@ Requires Node.js (LTS) and npm.
 
 ```sh
 npm install
-npm run dev              # Vite dev server with hot reload at http://localhost:5170
+npm run dev              # Vite dev server with hot reload at http://localhost:5130
 npm run typecheck:watch  # optional: continuous TypeScript type checking
 ```
 
