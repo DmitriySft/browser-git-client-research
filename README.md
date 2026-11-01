@@ -2,11 +2,12 @@
 
 ## Problem definition
 
-Research whether a strictly browser-only application can provide a shared
+Research whether a browser application with a customer-operated HTTP proxy can provide a shared
 file-operation foundation, work with HTTPS-hosted Git repositories, offer simple
 GitHub sign-in, and support near-realtime collaboration on the same repository
 data. The goal is to establish feasibility, constraints, and open decisions before
-grooming and solution selection, not to select an architecture or promise features.
+grooming and further solution selection. Confirmed decisions are recorded below;
+other technologies remain candidates, not selected solutions or promised features.
 
 ## Research questions
 
@@ -30,10 +31,34 @@ grooming and solution selection, not to select an architecture or promise featur
 
 ## Constraints and feasibility criteria
 
-The application must run **strictly in the browser, with no application backend**.
-Existing Git hosting services are allowed. Do not assume an application-owned
-authentication server, CORS proxy, or collaboration relay. Permission to use other
-third-party transport services remains unresolved.
+The application logic must run **in the browser, with no application-owned
+backend**. Existing Git hosting services are allowed. The customer-operated proxy
+decision below replaces the original prohibition on all backend infrastructure.
+It does not authorize an application-owned authentication server, a collaboration
+relay, or other third-party transport services.
+
+### Decision: customer-operated HTTP proxy
+
+The solution will include a simple HTTP reverse proxy that the customer deploys
+and operates using our instructions. The browser application, customer proxy,
+and Git host may use separate origins. The proxy will forward the required
+authentication and Git HTTP requests and provide narrowly configured CORS
+responses where the Git host does not allow direct browser access.
+
+The customer owns the proxy infrastructure and trusts their hosting platform.
+Our instructions and deployment configuration must be small, readable, and
+auditable so administrators can verify the permitted upstreams, routes, and
+methods, and confirm that credentials and repository payloads are not stored,
+logged, or forwarded to us. The proxy must not be an open proxy; CORS allowlisting
+alone is not access control.
+
+The current deployment candidate is Azure Container Apps with Azure Developer
+CLI (`azd`) and Traefik. We will provide additional deployment options later;
+these tools are not mandatory dependencies or a completed implementation.
+The proxy is a transport component, not a Git engine, credential store, or
+collaboration service.
+
+### Mandatory authentication persistence
 
 **Authentication persistence is mandatory:** authentication credentials must
 survive browser restarts so users can resume repository access without repeating
@@ -65,11 +90,13 @@ loss; these are investigation topics, not guarantees already established.
 - Which browsers, storage modes, Git hosts, and repository operations are required?
 - Is GitHub sign-in enough, or is broader SSO/provider support needed initially,
   and what repository permissions are acceptable?
-- Are third-party transport services acceptable within the browser-only constraint?
+- Which customer-proxy deployment options and access controls are needed?
+  Are any additional third-party transport services acceptable?
 - What does near-realtime collaboration mean for the intended workflow, and when
   should edits become durable Git checkpoints?
 - What collaboration, offline recovery, and conflict-resolution behavior is
   required, including binary files, renames, deletions, and external Git edits?
 
-Grooming will refine these questions and requirements. Implementation planning,
-library selection, and synchronization timing decisions come afterward.
+Grooming will refine these questions and requirements within the confirmed
+decisions. Detailed implementation planning, library selection, and
+synchronization timing decisions come afterward.
